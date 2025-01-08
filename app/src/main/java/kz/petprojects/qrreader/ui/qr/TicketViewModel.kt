@@ -54,7 +54,7 @@ class TicketViewModel(
 
         val receiptLines = ticketItems.subList(startIndex+1, endIndex).mapNotNull { it.text }
         val combinedText = extractReceiptText(receiptLines, 0, receiptLines.size)
-        val receiptMap = extractReceiptMapFromText(combinedText)
+        val receiptMap = processReceiptText(combinedText)
 
         val products = receiptMap.map { (name, price) ->
             val priceValue = processPrice(price)
@@ -78,48 +78,42 @@ class TicketViewModel(
 
 
     private fun extractReceiptText(receipt: List<String>, startIndex: Int, endIndex: Int): String {
-        return receipt.subList(startIndex, endIndex)
+        val result = receipt.subList(startIndex, endIndex)
             .joinToString("") { line ->
                 // Trim trailing spaces before joining
                 val trimmedLine = line.trimEnd()
                 // Add space after commas if not already followed by one
                 val formattedLine = trimmedLine.replace(Regex(",(?!\\s)"), ", ")
-                if (formattedLine.contains("=")) "$formattedLine\n" else formattedLine
+                if (formattedLine.contains("₸")) "\n$formattedLine\n" else formattedLine
             }
             .split("\n") // Split by newlines to process each segment individually
             .joinToString("\n") { line ->
                 line.replace(Regex("\\s{2,}"), " ") // Replace multiple spaces with one in each segment
             }
+
+        return result
     }
 
+    private fun extractPriceFromCalculationLine(line: String): String {
+        val regex = Regex("""(\d+)\s*\(.*?\)\s*x\s*([\d\s,]+₸)\s*=""")
+        val match = regex.find(line)
+        val price = match?.groupValues?.get(2)?.replace("\\s".toRegex(), "") ?: ""
+        return if (price.isNotEmpty()) price.dropLast(1) else price
+    }
 
+    private fun processReceiptText(receiptText: String): List<Pair<String, String>> {
+        val lines = receiptText.split("\n").map { it.trim() }.filter { it.isNotEmpty() }
+        val result = mutableListOf<Pair<String, String>>()
 
-    private fun extractReceiptMapFromText(receiptText: String): Map<String, String> {
-        val receiptMap = mutableMapOf<String, String>()
-        val regex = Regex("""^(.*)=(.*)$""") // Matches and splits at `=`
-        val shtRegex = Regex("""\(шт\).*""") // Matches `(шт)` and everything after it
-        val shtRegex2 =  Regex("""\( шт\).*""")
-        val shtRegex4 =  Regex("""\(  шт\).*""")
-        val shtRegex3 =  Regex("""\(шт \).*""")
-
-        // Split the combined text into lines and process each line
-        receiptText.split("\n").forEach { line ->
-            val trimmedLine = line.trim()
-            val match = regex.find(trimmedLine)
-            if (match != null) {
-                var (beforeEquals, afterEquals) = match.destructured
-                // Remove `(шт)` and everything after it
-                beforeEquals = beforeEquals.replace(shtRegex, "").trim()
-                beforeEquals = beforeEquals.replace(shtRegex2, "").trim()
-                beforeEquals = beforeEquals.replace(shtRegex3, "").trim()
-                beforeEquals = beforeEquals.replace(shtRegex4, "").trim()
-
-                receiptMap[beforeEquals] = afterEquals.trim()
-
+        for (i in lines.indices step 2) {
+            val name = lines[i] // Odd-indexed line (0-based index, i.e., name)
+            if (i + 1 < lines.size) { // Ensure there is a next line for the price
+                val priceLine = lines[i + 1] // Even-indexed line (calculation line)
+                val price = extractPriceFromCalculationLine(priceLine) // Extract price using helper function
+                result.add(Pair(name, price))
             }
         }
-
-        return receiptMap
+        return result
     }
 
     private fun processPrice(price: String): Double {
@@ -128,7 +122,7 @@ class TicketViewModel(
         return cleanedPrice.toDoubleOrNull() ?: 0.0 // Return 0.0 if invalid
     }
 
-    fun extractTotalPrice(receiptText: String): Double {
+    private fun extractTotalPrice(receiptText: String): Double {
         val regex = Regex("""БАРЛЫҒЫ/ИТОГО:\s*(\d[\d\s,]*\d)₸""") // Matches the pattern after "БАРЛЫҒЫ/ИТОГО:"
         val match = regex.find(receiptText)
 
